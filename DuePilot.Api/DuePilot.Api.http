@@ -1,0 +1,6 @@
+@DuePilot.Api_HostAddress = http://localhost:5252
+
+GET {{DuePilot.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
