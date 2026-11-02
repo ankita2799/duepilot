@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
@@ -32,6 +33,25 @@ app.MapGet("/weatherforecast", () =>
     return forecast;
 })
 .WithName("GetWeatherForecast");
+
+Db.Init();
+
+app.MapGet("/receivables", () =>
+{
+    using var conn = new SqliteConnection(Db.ConnectionString);
+    conn.Open();
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT * FROM vw_receivables ORDER BY days_overdue DESC LIMIT 20";
+    using var r = cmd.ExecuteReader();
+    var rows = new List<Dictionary<string, object?>>();
+    while (r.Read())
+    {
+        var row = new Dictionary<string, object?>();
+        for (int i = 0; i < r.FieldCount; i++) row[r.GetName(i)] = r.IsDBNull(i) ? null : r.GetValue(i);
+        rows.Add(row);
+    }
+    return rows;
+});
 
 app.Run();
 
