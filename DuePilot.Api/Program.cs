@@ -166,6 +166,23 @@ app.MapGet("/audit", (int? limit) =>
     return Store.Rows(cmd);
 });
 
+app.MapGet("/invoices", () =>
+{
+    using var c = Store.Open();
+    using var cmd = c.CreateCommand();
+    cmd.CommandText = @"SELECT i.id, i.invoice_number, c.name AS client_name, i.amount, i.currency,
+                               i.due_date, i.status, i.last_reminder_date,
+                               CASE WHEN i.status IN ('Draft','Sent') AND date(i.due_date) < date('now')
+                                    THEN CAST(julianday(date('now')) - julianday(date(i.due_date)) AS INTEGER)
+                                    ELSE 0 END AS days_overdue
+                        FROM invoices i
+                        JOIN clients c ON c.id = i.client_id
+                        ORDER BY CASE WHEN i.status IN ('Draft','Sent') THEN 0 ELSE 1 END,
+                                 days_overdue DESC, i.id
+                        LIMIT 200";
+    return Store.Rows(cmd);
+});
+
 app.Run();
 
 public record SqlRequest(string? Sql);

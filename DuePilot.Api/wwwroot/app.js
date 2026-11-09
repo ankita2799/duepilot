@@ -149,7 +149,7 @@ function renderChase(d, secs) {
     if (skipped.length) html += `<h3 class="h6 mt-3">Skipped (${skipped.length})</h3>
     <ul class="small text-muted mb-0">${skipped.map(s => `<li>${esc(s.invoice || 'Row')}: ${esc(s.reason)}</li>`).join('')}</ul>`;
     showResult(`${created.length} proposed`, d.sql, html);
-    loadApprovals();
+    refreshAll();
 }
 
 const ACTION_LABEL = { SendReminder: 'Send reminder', SendInvoice: 'Send invoice' };
@@ -205,7 +205,7 @@ $('approvalList').addEventListener('click', async ev => {
     } else {
         box.innerHTML = `<div class="alert alert-danger">${esc(r.data?.error || 'Something went wrong.')} ${esc(String(r.data?.detail || '').slice(0, 200))}</div>`;
     }
-    loadApprovals();
+    refreshAll();
 });
 
 document.querySelectorAll('input[name="mode"]').forEach(el => el.addEventListener('change', () => {
@@ -216,5 +216,83 @@ document.querySelectorAll('input[name="mode"]').forEach(el => el.addEventListene
 $('role').addEventListener('change', loadApprovals);
 $('reloadApprovals').addEventListener('click', loadApprovals);
 
+let allInvoices = [];
+const isOpen = i => i.status === 'Draft' || i.status === 'Sent';
+
+async function loadInvoices() {
+    const r = await api('/invoices');
+    if (!r.ok) { $('invoiceTable').innerHTML = '<div class="text-danger small">Could not load invoices.</div>'; return; }
+    allInvoices = r.data || [];
+    renderInvoices();
+}
+
+function renderInvoices() {
+    const open = allInvoices.filter(isOpen);
+    const late = open.filter(i => i.days_overdue > 0);
+    const paid = allInvoices.filter(i => i.status === 'Paid');
+    const sum = list => list.reduce((s, i) => s + Number(i.amount), 0);
+    const tile = (title, list, cls) => `<div class="col-12 col-md-4"><div class="border rounded p-3">
+      <div class="small text-muted">${title}</div>
+      <div class="fs-4 fw-semibold text-${cls}">${money(sum(list))}</div>
+      <div class="small text-muted">${list.length} invoice${list.length === 1 ? '' : 's'}</div></div></div>`;
+    $('tiles').innerHTML = tile('Open', open, 'primary') + tile('Overdue', late, 'danger') + tile('Paid', paid, 'success');
+
+    const f = $('invFilter').value;
+    const rows = allInvoices.filter(i => f === 'all' || (f === 'paid' ? i.status === 'Paid' : isOpen(i)));
+    $('invoiceTable').innerHTML = table(rows.map(i => ({
+        invoice_number: i.invoice_number, client_name: i.client_name, amount: i.amount,
+        due_date: i.due_date, days_overdue: isOpen(i) ? i.days_overdue : null,
+        status: i.status, last_reminder_date: i.last_reminder_date
+    })));
+}
+
+$('invFilter').addEventListener('change', renderInvoices);
+
+$('refreshStatus').addEventListener('click', async () => {
+    const btn = $('refreshStatus');
+    btn.disabled = true; btn.textContent = 'Checking PayPal...';
+    const r = await api('/invoices/refresh-status', { method: 'POST' });
+    btn.disabled = false; btn.textContent = 'Refresh status from PayPal';
+    $('refreshMsg').innerHTML = r.ok
+        ? `<span class="text-success">Checked ${r.data.inspected} invoice(s) with PayPal: ${r.data.paid} newly paid${r.data.errors ? `, ${r.data.errors} could not be checked` : ''}.</span>`
+        : '<span class="text-danger">Could not refresh. Please try again.</span>';
+    refreshAll();
+});
+
+function describe(a) {
+    let d = {};
+    try { d = JSON.parse(a.details || '{}'); } catch { /* plain text */ }
+    const who = a.actor === 'ai' ? 'AI' : a.actor === 'system' ? 'System'
+        : a.actor.charAt(0).toUpperCase() + a.actor.slice(1);
+    switch (a.action) {
+        case 'chase_requested': return `AI chase request "${d.question || ''}": ${d.created ?? 0} proposed, ${d.skipped ?? 0} skipped`;
+        case 'proposal_created': return `AI proposed "${ACTION_LABEL[d.action] || d.action}" for ${d.invoice}`;
+        case 'approved': return `${who} approved request #${d.approval_id}`;
+        case 'rejected': return `${who} rejected request #${d.approval_id}${d.reason ? ' (' + d.reason + ')' : ''}`;
+        case 'invoice_sent': return `PayPal invoice sent for ${d.invoice}`;
+        case 'reminder_sent': return `Reminder sent for ${d.invoice}`;
+        case 'invoice_issued_as_reminder': return `Invoice issued and sent for ${d.invoice} (first time in PayPal)`;
+        case 'action_failed': return `PayPal action failed for request #${d.approval_id}`;
+        case 'payment_received': return `Payment received for ${d.invoice}`;
+        case 'invoice_cancelled': return `Invoice ${d.invoice} was cancelled`;
+        default: return `${who}: ${String(a.action).replace(/_/g, ' ')}`;
+    }
+}
+const ACTOR_CLASS = { ai: 'primary', system: 'secondary' };
+
+async function loadAudit() {
+    const r = await api('/audit?limit=30');
+    if (!r.ok) { $('timeline').innerHTML = '<div class="text-danger small">Could not load the timeline.</div>'; return; }
+    const items = r.data || [];
+    $('timeline').innerHTML = items.length ? items.map(a => `
+    <div class="d-flex gap-2 py-1 border-bottom">
+      <span class="badge text-bg-${ACTOR_CLASS[a.actor] || 'success'} align-self-start mt-1">${esc(a.actor)}</span>
+      <div class="flex-grow-1">${esc(describe(a))}</div>
+      <div class="small text-muted text-nowrap">${esc(new Date(a.ts).toLocaleString())}</div>
+    </div>`).join('') : '<p class="text-muted mb-0">No activity yet.</p>';
+}
+
+function refreshAll() { return Promise.all([loadApprovals(), loadInvoices(), loadAudit()]); }
+
 renderExamples();
-loadApprovals();
+refreshAll();

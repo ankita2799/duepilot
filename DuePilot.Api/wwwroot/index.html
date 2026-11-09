@@ -70,6 +70,33 @@
   </div>
 </section>
 
+    <section class="card shadow-sm mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <h2 class="h5 mb-0">Invoices</h2>
+      <div class="d-flex gap-2">
+        <select id="invFilter" class="form-select form-select-sm w-auto" aria-label="Filter invoices">
+          <option value="open">Open</option>
+          <option value="paid">Paid</option>
+          <option value="all">All</option>
+        </select>
+        <button id="refreshStatus" class="btn btn-primary btn-sm">Refresh status from PayPal</button>
+      </div>
+    </div>
+    <div id="tiles" class="row g-2 mb-3"></div>
+    <div id="refreshMsg" class="small mb-2" aria-live="polite"></div>
+    <div id="invoiceTable"></div>
+  </div>
+</section>
+
+<section class="card shadow-sm mb-4">
+  <div class="card-body">
+    <h2 class="h5 mb-3">Activity timeline</h2>
+    <div id="timeline"></div>
+  </div>
+</section>
+
+
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
