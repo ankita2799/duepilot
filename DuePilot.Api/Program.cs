@@ -1,4 +1,6 @@
 using Microsoft.Data.Sqlite;
+using System.Text.Json;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
@@ -85,11 +87,76 @@ app.MapPost("/dev/test-invoice", async (IPayPalGateway pp) =>
 app.MapGet("/dev/status/{id}", async (IPayPalGateway pp, string id) => new { status = await pp.GetStatusAsync(id) });
 app.MapPost("/dev/remind/{id}", async (IPayPalGateway pp, string id) => { await pp.SendReminderAsync(id); return Results.Ok(); });
 //---------------------
+
+app.MapPost("/chase", async (AskRequest req, ILlmClient llm) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Question))
+        return Results.BadRequest(new { error = "Tell me who to chase." });
+
+    string raw;
+    try { raw = await llm.CompleteAsync(SqlPrompt.System + SqlPrompt.ChaseRule, req.Question); }
+    catch (Exception) { return Results.Json(new { error = "The AI service is busy. Please try again in a moment." }, statusCode: 503); }
+
+    var cleaned = raw.Replace("```sql", "").Replace("```", "").Trim();
+    var (ok, error, sql) = SqlGuard.Validate(cleaned);
+    if (!ok) return Results.BadRequest(new { error = "Blocked: " + error, generated = cleaned });
+
+    List<Dictionary<string, object?>> rows;
+    try { rows = SqlRunner.Run(sql!); }
+    catch (SqliteException ex) { return Results.BadRequest(new { error = ex.Message, generated = sql }); }
+
+    var result = Chaser.CreateProposals(rows);
+    Store.Audit("ai", "chase_requested", JsonSerializer.Serialize(
+        new { question = req.Question, sql, created = result.Created.Count, skipped = result.Skipped.Count }));
+    return Results.Ok(new { question = req.Question, sql, created = result.Created, skipped = result.Skipped });
+});
+
+app.MapGet("/approvals", (string? status) =>
+{
+    using var c = Store.Open();
+    using var cmd = c.CreateCommand();
+    cmd.CommandText = @"SELECT a.id, a.action_type, a.status, a.requested_at, a.decided_by, a.decided_at, a.payload,
+                               i.invoice_number, cl.name AS client_name, i.amount
+                        FROM approvals a
+                        JOIN invoices i ON i.id = a.invoice_id
+                        JOIN clients cl ON cl.id = i.client_id
+                        WHERE ($s IS NULL OR a.status = $s)
+                        ORDER BY a.id DESC LIMIT 100";
+    cmd.Parameters.AddWithValue("$s", (object?)status ?? DBNull.Value);
+    return Store.Rows(cmd);
+});
+
+app.MapPost("/approvals/{id:long}/approve", async (long id, DecisionRequest? body, IPayPalGateway pp) =>
+{
+    var (code, result) = await Decisions.ApproveAsync(id, body?.DecidedBy ?? "manager", pp);
+    return Results.Json(result, statusCode: code);
+});
+
+app.MapPost("/approvals/{id:long}/reject", (long id, DecisionRequest? body) =>
+{
+    var (code, result) = Decisions.Reject(id, body?.DecidedBy ?? "manager", body?.Reason);
+    return Results.Json(result, statusCode: code);
+});
+
+app.MapPost("/invoices/refresh-status", async (IPayPalGateway pp) =>
+    Results.Ok(await Decisions.RefreshStatusAsync(pp)));
+
+app.MapGet("/audit", (int? limit) =>
+{
+    using var c = Store.Open();
+    using var cmd = c.CreateCommand();
+    cmd.CommandText = "SELECT id, ts, actor, action, details FROM audit_log ORDER BY id DESC LIMIT $n";
+    cmd.Parameters.AddWithValue("$n", Math.Clamp(limit ?? 50, 1, 200));
+    return Store.Rows(cmd);
+});
+
 app.Run();
 
 public record SqlRequest(string? Sql);
 
 public record AskRequest(string? Question);
+
+public record DecisionRequest(string? DecidedBy, string? Reason);
 
 record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
 {

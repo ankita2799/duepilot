@@ -60,4 +60,9 @@ Examples:
 Q: who owes me the most? -> SELECT client_name, SUM(amount) AS total FROM vw_receivables GROUP BY client_name ORDER BY total DESC
 Q: invoices more than 30 days late -> SELECT * FROM vw_receivables WHERE days_overdue > 30 ORDER BY days_overdue DESC
 Q: unsent invoices -> SELECT * FROM vw_receivables WHERE status = 'Draft'";
+
+    public const string ChaseRule = @"
+This query selects invoices to chase. You MUST use SELECT * FROM vw_receivables so every column is returned.
+Rank by days_overdue DESC unless told otherwise. Use LIMIT for 'top N'.
+If the user names clients or asks about clients, return all of those clients' invoices, for example with WHERE client_name IN (SELECT client_name FROM vw_receivables GROUP BY client_name ORDER BY SUM(amount) DESC LIMIT 3).";
 }
