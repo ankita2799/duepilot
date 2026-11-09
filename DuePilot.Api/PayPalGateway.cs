@@ -9,7 +9,7 @@ public record InvoiceResult(string PayPalInvoiceId, string Status, string? PayUr
 public interface IPayPalGateway
 {
     Task<InvoiceResult> CreateAndSendInvoiceAsync(InvoiceRequest req);
-    Task SendReminderAsync(string paypalInvoiceId);
+    Task SendReminderAsync(string paypalInvoiceId, string? note = null);
     Task<string> GetStatusAsync(string paypalInvoiceId);
 }
 
@@ -98,13 +98,13 @@ public class RealPayPalGateway(HttpClient http, IConfiguration cfg) : IPayPalGat
         return new InvoiceResult(id, status, payUrl);
     }
 
-    public Task SendReminderAsync(string id) =>
-        CallAsync(HttpMethod.Post, $"/v2/invoicing/invoices/{id}/remind", new
-        {
-            subject = "Payment reminder",
-            note = "A friendly reminder that this invoice is awaiting payment.",
-            send_to_invoicer = false
-        });
+    public Task SendReminderAsync(string id, string? note = null) =>
+     CallAsync(HttpMethod.Post, $"/v2/invoicing/invoices/{id}/remind", new
+     {
+         subject = "Payment reminder",
+         note = string.IsNullOrWhiteSpace(note) ? "A friendly reminder that this invoice is awaiting payment." : note,
+         send_to_invoicer = false
+     });
 
     public async Task<string> GetStatusAsync(string id) => (await FetchAsync(id)).Status;
 }
@@ -119,6 +119,6 @@ public class FakePayPalGateway : IPayPalGateway
         Statuses[id] = "SENT";
         return Task.FromResult(new InvoiceResult(id, "SENT", null));
     }
-    public Task SendReminderAsync(string id) => Task.CompletedTask;
+    public Task SendReminderAsync(string id, string? note = null) => Task.CompletedTask;
     public Task<string> GetStatusAsync(string id) => Task.FromResult(Statuses.GetValueOrDefault(id, "UNKNOWN"));
 }

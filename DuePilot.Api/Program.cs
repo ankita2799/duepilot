@@ -11,7 +11,18 @@ builder.Services.AddHttpClient<ILlmClient, GeminiClient>(client =>
 {
     client.Timeout = TimeSpan.FromMinutes(5);
 });
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        policy.WithOrigins("http://localhost:5252")
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
 var app = builder.Build();
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -19,7 +30,8 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-app.UseHttpsRedirection();
+//app.UseHttpsRedirection();
+app.UseCors("AllowFrontend");
 
 var summaries = new[]
 {
@@ -126,15 +138,19 @@ app.MapGet("/approvals", (string? status) =>
     return Store.Rows(cmd);
 });
 
-app.MapPost("/approvals/{id:long}/approve", async (long id, DecisionRequest? body, IPayPalGateway pp) =>
+static bool IsManager(HttpRequest r) => r.Headers["X-Role"] == "manager";
+
+app.MapPost("/approvals/{id:long}/approve", async (long id, DecisionRequest? body, IPayPalGateway pp, HttpRequest http) =>
 {
-    var (code, result) = await Decisions.ApproveAsync(id, body?.DecidedBy ?? "manager", pp);
+    if (!IsManager(http)) return Results.Json(new { error = "Only a manager can approve." }, statusCode: 403);
+    var (code, result) = await Decisions.ApproveAsync(id, "manager", pp);
     return Results.Json(result, statusCode: code);
 });
 
-app.MapPost("/approvals/{id:long}/reject", (long id, DecisionRequest? body) =>
+app.MapPost("/approvals/{id:long}/reject", (long id, DecisionRequest? body, HttpRequest http) =>
 {
-    var (code, result) = Decisions.Reject(id, body?.DecidedBy ?? "manager", body?.Reason);
+    if (!IsManager(http)) return Results.Json(new { error = "Only a manager can reject." }, statusCode: 403);
+    var (code, result) = Decisions.Reject(id, "manager", body?.Reason);
     return Results.Json(result, statusCode: code);
 });
 

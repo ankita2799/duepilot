@@ -25,7 +25,7 @@ public static class Decisions
         Dictionary<string, object?> d;
         using (var q = c.CreateCommand())
         {
-            q.CommandText = @"SELECT a.action_type, a.invoice_id, i.invoice_number, i.amount, i.currency, i.due_date,
+            q.CommandText = @"SELECT a.action_type, a.payload, a.invoice_id, i.invoice_number, i.amount, i.currency, i.due_date,
                                      i.paypal_invoice_id, cl.name AS client_name, cl.email AS client_email
                               FROM approvals a
                               JOIN invoices i ON i.id = a.invoice_id
@@ -49,7 +49,9 @@ public static class Decisions
 
             if (action == "SendReminder" && !string.IsNullOrEmpty(existing))
             {
-                await pp.SendReminderAsync(existing);
+                string? note = null;
+                try { note = JsonDocument.Parse((string)d["payload"]!).RootElement.GetProperty("note").GetString(); } catch { }
+                await pp.SendReminderAsync(existing, note);
                 ppId = existing;
                 what = "reminder_sent";
             }
