@@ -7,7 +7,7 @@ public class GeminiClient(HttpClient http, IConfiguration cfg) : ILlmClient
 {
     public async Task<string> CompleteAsync(string system, string user)
     {
-        var models = new[] { cfg["Llm:Model"], cfg["Llm:FallbackModel"] }
+        var models = new[] { cfg["Llm:Model"],cfg["Llm:FallbackModel"] }
             .Where(m => !string.IsNullOrWhiteSpace(m)).ToArray();
 
         var body = JsonSerializer.Serialize(new
@@ -38,7 +38,8 @@ public class GeminiClient(HttpClient http, IConfiguration cfg) : ILlmClient
 
                 var code = (int)res.StatusCode;
                 last = new Exception($"LLM error {code}: {text}");
-                if (code != 503 && code != 429 && code != 500) throw last; // a real error, don't retry
+                if (code == 429) break;                       // quota reached: retrying only burns more
+                if (code != 503 && code != 500) throw last;   // real errors: stop immediately
                 await Task.Delay(TimeSpan.FromSeconds(attempt * 2));
             }
         }

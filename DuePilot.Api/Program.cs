@@ -70,21 +70,27 @@ app.MapGet("/receivables", () =>
     }
     return rows;
 });
-app.MapPost("/sql/run", (SqlRequest req) =>
-{
-    var (ok, error, sql) = SqlGuard.Validate(req.Sql);
-    if (!ok) return Results.BadRequest(new { error });
-    try { return Results.Ok(new { sql, rows = SqlRunner.Run(sql!) }); }
-    catch (SqliteException ex) { return Results.BadRequest(new { error = ex.Message }); }
-});
+
 
 app.MapPost("/ask", async (AskRequest req, ILlmClient llm) =>
 {
     if (string.IsNullOrWhiteSpace(req.Question))
         return Results.BadRequest(new { error = "Ask a question." });
     string raw;
+    var sw = System.Diagnostics.Stopwatch.StartNew();
     try { raw = await llm.CompleteAsync(SqlPrompt.System, req.Question); }
-    catch (Exception ex) { return Results.Problem(ex.Message); }
+    catch (Exception ex)
+    {
+        var limited = ex.Message.Contains("429");
+        return Results.Json(new
+        {
+            error = limited
+            ? "The AI's free quota is used up for now. Please try again later."
+            : "The AI service is busy. Please try again in a moment."
+        },
+            statusCode: limited ? 429 : 503);
+    }
+    Console.WriteLine($"LLM total: {sw.ElapsedMilliseconds} ms");
 
     var cleaned = raw.Replace("```sql", "").Replace("```", "").Trim();
     var (ok, error, sql) = SqlGuard.Validate(cleaned);
@@ -92,13 +98,6 @@ app.MapPost("/ask", async (AskRequest req, ILlmClient llm) =>
     try { return Results.Ok(new { question = req.Question, sql, rows = SqlRunner.Run(sql!) }); }
     catch (SqliteException ex) { return Results.BadRequest(new { error = ex.Message, generated = sql }); }
 });
-//------Temporary-----
-app.MapPost("/dev/test-invoice", async (IPayPalGateway pp) =>
-    await pp.CreateAndSendInvoiceAsync(
-        new InvoiceRequest("Test Client", "test@example.com", 25m, "USD", "DEV-1", DateTime.Today.AddDays(7))));
-app.MapGet("/dev/status/{id}", async (IPayPalGateway pp, string id) => new { status = await pp.GetStatusAsync(id) });
-app.MapPost("/dev/remind/{id}", async (IPayPalGateway pp, string id) => { await pp.SendReminderAsync(id); return Results.Ok(); });
-//---------------------
 
 app.MapPost("/chase", async (AskRequest req, ILlmClient llm) =>
 {
@@ -107,7 +106,17 @@ app.MapPost("/chase", async (AskRequest req, ILlmClient llm) =>
 
     string raw;
     try { raw = await llm.CompleteAsync(SqlPrompt.System + SqlPrompt.ChaseRule, req.Question); }
-    catch (Exception) { return Results.Json(new { error = "The AI service is busy. Please try again in a moment." }, statusCode: 503); }
+    catch (Exception ex)
+    {
+        var limited = ex.Message.Contains("429");
+        return Results.Json(new
+        {
+            error = limited
+            ? "The AI's free quota is used up for now. Please try again later."
+            : "The AI service is busy. Please try again in a moment."
+        },
+            statusCode: limited ? 429 : 503);
+    }
 
     var cleaned = raw.Replace("```sql", "").Replace("```", "").Trim();
     var (ok, error, sql) = SqlGuard.Validate(cleaned);
